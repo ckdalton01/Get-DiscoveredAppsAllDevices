@@ -1,12 +1,36 @@
 # ============================================================
-# MODULES
+# MODULE CHECKS
 # ============================================================
-Import-Module Microsoft.Graph
-Import-Module ImportExcel
+$requiredModules = @('Microsoft.Graph', 'ImportExcel')
+$missingModules = @()
+
+Write-Host "Checking for required modules..." -ForegroundColor Cyan
+
+foreach ($module in $requiredModules) {
+    if (-not (Get-Module -ListAvailable -Name $module)) {
+        $missingModules += $module
+        Write-Host "  [MISSING] $module" -ForegroundColor Red
+    } else {
+        Write-Host "  [OK] $module" -ForegroundColor Green
+    }
+}
+
+if ($missingModules.Count -gt 0) {
+    Write-Host "`nERROR: Missing required modules!" -ForegroundColor Red
+    Write-Host "Please install the following modules before running this script:" -ForegroundColor Yellow
+    foreach ($module in $missingModules) {
+        Write-Host "  Install-Module $module -Scope CurrentUser" -ForegroundColor White
+    }
+    Write-Host "`nScript execution halted." -ForegroundColor Red
+    exit 1
+}
+
+Write-Host "All required modules are installed.`n" -ForegroundColor Green
 
 # ============================================================
 # GRAPH AUTH
 # ============================================================
+Write-Host "Connecting to GraphAPI.`n" -ForegroundColor Green
 Connect-MgGraph -Scopes `
     "DeviceManagementApps.Read.All",
     "DeviceManagementManagedDevices.Read.All"
@@ -146,7 +170,7 @@ $installations = $data |
             Devices      = ($deviceList -join "`n")
         }
     } |
-    Sort-Object InstallCount -Descending
+    Sort-Object AppVersion -Descending
 
 # ------------------------------------------------------------
 # ERRORS TAB
