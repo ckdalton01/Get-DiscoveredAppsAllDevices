@@ -1,4 +1,15 @@
 # ============================================================
+# PARAMETERS
+# ============================================================
+param(
+    [Parameter(Mandatory = $false)]
+    [string]$DisplayName,
+    
+    [Parameter(Mandatory = $false)]
+    [switch]$CSV
+)
+
+# ============================================================
 # MODULE CHECKS
 # ============================================================
 $requiredModules = @('Microsoft.Graph', 'ImportExcel')
@@ -30,10 +41,53 @@ Write-Host "All required modules are installed.`n" -ForegroundColor Green
 # ============================================================
 # GRAPH AUTH
 # ============================================================
-Write-Host "Connecting to GraphAPI.`n" -ForegroundColor Green
-Connect-MgGraph -Scopes `
-    "DeviceManagementApps.Read.All",
-    "DeviceManagementManagedDevices.Read.All"
+Write-Host "Connecting to Microsoft Graph..." -ForegroundColor Cyan
+
+try {
+    Connect-MgGraph -Scopes `
+        "DeviceManagementApps.Read.All",
+        "DeviceManagementManagedDevices.Read.All" `
+        -ErrorAction Stop
+    
+    # Verify authentication was successful
+    $context = Get-MgContext
+    
+    if (-not $context) {
+        throw "Authentication verification failed - no context available"
+    }
+    
+    Write-Host "Successfully authenticated to Microsoft Graph" -ForegroundColor Green
+    Write-Host "  Account: $($context.Account)" -ForegroundColor Gray
+    Write-Host "  Scopes: $($context.Scopes -join ', ')`n" -ForegroundColor Gray
+}
+catch {
+    Write-Host "`nERROR: Failed to authenticate to Microsoft Graph!" -ForegroundColor Red
+    
+    # Provide specific guidance for common errors
+    if ($_.Exception.Message -like "*window handle*") {
+        Write-Host "`nThis error typically occurs when running in certain environments." -ForegroundColor Yellow
+        Write-Host "Try one of these solutions:" -ForegroundColor Yellow
+        Write-Host "  1. Run PowerShell as Administrator" -ForegroundColor White
+        Write-Host "  2. Use a different authentication method:" -ForegroundColor White
+        Write-Host "     Connect-MgGraph -UseDeviceCode" -ForegroundColor Cyan
+        Write-Host "  3. Run from Windows PowerShell instead of PowerShell Core" -ForegroundColor White
+    }
+    elseif ($_.Exception.Message -like "*canceled*") {
+        Write-Host "`nAuthentication was canceled by user." -ForegroundColor Yellow
+        Write-Host "Please run the script again and complete the authentication process." -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "`nError details: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "`nTroubleshooting steps:" -ForegroundColor Yellow
+        Write-Host "  1. Ensure you have the required permissions (Intune Administrator or Global Administrator)" -ForegroundColor White
+        Write-Host "  2. Try disconnecting first: Disconnect-MgGraph" -ForegroundColor White
+        Write-Host "  3. Check your internet connection" -ForegroundColor White
+        Write-Host "  4. Try using device code authentication: Connect-MgGraph -UseDeviceCode" -ForegroundColor White
+    }
+    
+    Write-Host "`nScript execution halted." -ForegroundColor Red
+    exit 1
+}
 
 # ============================================================
 # PATHS & SETTINGS
@@ -56,7 +110,38 @@ Write-Host "Collecting discovered apps from Intune..." -ForegroundColor Cyan
 # ============================================================
 # DATA COLLECTION (STREAMED TO CSV)
 # ============================================================
-$apps = Get-MgDeviceManagementDetectedApp -All
+
+# Verify we're still authenticated before making API calls
+if (-not (Get-MgContext)) {
+    Write-Host "`nERROR: Not authenticated to Microsoft Graph!" -ForegroundColor Red
+    Write-Host "Please run Connect-MgGraph and try again." -ForegroundColor Yellow
+    Write-Host "Script execution halted." -ForegroundColor Red
+    exit 1
+}
+
+try {
+    $apps = Get-MgDeviceManagementDetectedApp -All -ErrorAction Stop
+}
+catch {
+    Write-Host "`nERROR: Failed to retrieve discovered apps from Intune!" -ForegroundColor Red
+    Write-Host "Error details: $($_.Exception.Message)" -ForegroundColor Yellow
+    Write-Host "`nPossible causes:" -ForegroundColor Yellow
+    Write-Host "  - Insufficient permissions (requires DeviceManagementApps.Read.All)" -ForegroundColor White
+    Write-Host "  - Network connectivity issues" -ForegroundColor White
+    Write-Host "  - Authentication token expired" -ForegroundColor White
+    Write-Host "`nScript execution halted." -ForegroundColor Red
+    exit 1
+}
+
+# Apply DisplayName filter if specified
+if ($DisplayName) {
+    Write-Host "Filtering apps by DisplayName: '$DisplayName'" -ForegroundColor Yellow
+    $apps = $apps | Where-Object { $_.DisplayName -like $DisplayName }
+    Write-Host "Found $($apps.Count) matching app(s)" -ForegroundColor Yellow
+}
+else {
+    Write-Host "No filter applied - processing all $($apps.Count) app(s)" -ForegroundColor Cyan
+}
 
 foreach ($app in $apps) {
 
@@ -122,8 +207,16 @@ foreach ($app in $apps) {
 Write-Host "CSV export complete." -ForegroundColor Green
 
 # ============================================================
-# EXCEL REPORT GENERATION
+# OUTPUT LOGIC
 # ============================================================
+if ($CSV) {
+    # CSV-only output requested
+    Write-Host "`nCSV output complete: $csvPath" -ForegroundColor Green
+    Write-Host "Use the -CSV switch to generate CSV output only." -ForegroundColor Gray
+    exit 0
+}
+
+# Default: Generate Excel and remove CSV
 Write-Host "Generating Excel report..." -ForegroundColor Cyan
 
 $data = Import-Csv $csvPath
@@ -240,4 +333,8 @@ $ws.Column($devicesColumn).Width = 80
 
 Close-ExcelPackage $pkg
 
-Write-Host "Excel report created: $xlsxPath" -ForegroundColor Green
+# Clean up intermediate CSV file
+Remove-Item $csvPath -ErrorAction SilentlyContinue
+
+Write-Host "`nExcel report created: $xlsxPath" -ForegroundColor Green
+Write-Host "Intermediate CSV file has been removed. Use -CSV switch if you need CSV output." -ForegroundColor Gray
