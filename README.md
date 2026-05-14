@@ -1,10 +1,10 @@
 # Intune Software Inventory Report
 
-A PowerShell script that generates a comprehensive Excel report of all software applications discovered across your Intune-managed devices.
+A PowerShell script that generates a comprehensive Excel report of all software applications discovered across your Intune-managed devices and can optionally build Entra ID device groups from the discovered app inventory.
 
 ## Overview
 
-This script collects discovered applications from Microsoft Intune and generates a detailed Excel workbook with multiple worksheets showing application summaries, installation details, and error tracking.
+This script collects discovered applications from Microsoft Intune, generates a detailed Excel workbook with multiple worksheets showing application summaries, installation details, and error tracking, and can optionally create or update static Entra ID device groups based on the filtered application results.
 
 ## Prerequisites
 
@@ -22,10 +22,15 @@ This script collects discovered applications from Microsoft Intune and generates
 
 ### Required Permissions
 
-The script requires the following Microsoft Graph API permissions:
+The script always requires the following Microsoft Graph API permissions:
 
 - `DeviceManagementApps.Read.All`
 - `DeviceManagementManagedDevices.Read.All`
+
+When you use `-BuildGroup`, it also requires:
+
+- `Group.ReadWrite.All`
+- `Device.Read.All`
 
 ### Azure AD Requirements
 
@@ -61,6 +66,21 @@ The script requires the following Microsoft Graph API permissions:
 .\Get-DiscoveredAppsAllDevices.ps1 -DisplayName "*Adobe Reader*"  # Apps containing "Adobe Reader"
 ```
 
+**Build or update an Entra ID device group from the filtered results:**
+```powershell
+# Create or update App.GoogleChrome with all matching devices and still generate the Excel report
+.\Get-DiscoveredAppsAllDevices.ps1 -DisplayName "Google Chrome" -BuildGroup
+
+# Wildcards use the non-wildcard text for the group name
+.\Get-DiscoveredAppsAllDevices.ps1 -DisplayName "Java*" -BuildGroup          # App.Java
+.\Get-DiscoveredAppsAllDevices.ps1 -DisplayName "*Adobe Reader*" -BuildGroup # App.AdobeReader
+```
+
+**Enable CMTrace-compatible verbose logging:**
+```powershell
+.\Get-DiscoveredAppsAllDevices.ps1 -DisplayName "Google Chrome" -BuildGroup -Verbose
+```
+
 ### Parameters
 
 **`-DisplayName` (Optional)**
@@ -85,13 +105,31 @@ The script requires the following Microsoft Graph API permissions:
   .\Get-DiscoveredAppsAllDevices.ps1 -DisplayName "Chrome*" -CSV
   ```
 
+**`-BuildGroup` (Optional Switch)**
+- Requires `-DisplayName`
+- Creates or updates a static Entra ID device group named `App.<DisplayNameToken>`
+- Adds all devices from the filtered results to the group
+- Removes stale device members when all matching devices were resolved successfully
+- If wildcard characters are used, only the non-wildcard text is used for the group name
+- Examples:
+  - `-DisplayName "Google Chrome" -BuildGroup` creates or updates `App.GoogleChrome`
+  - `-DisplayName "Java*" -BuildGroup` creates or updates `App.Java`
+  - `-DisplayName "*Adobe Reader*" -BuildGroup` creates or updates `App.AdobeReader`
+
+**`-Verbose` (Common PowerShell Parameter)**
+- Enables verbose console output
+- Writes a CMTrace-compatible log file named `Get-DiscoveredAppsAllDevices.log`
+- Useful when troubleshooting authentication, Graph throttling, or group membership updates
+
 ### What Happens
 
-1. **Authentication**: The script will prompt you to sign in to Microsoft Graph
+1. **Authentication**: The script prompts you to sign in to Microsoft Graph using the required scopes for the selected switches
 2. **Data Collection**: Retrieves discovered apps from Intune and their associated devices
-3. **Output Generation**: 
-   - **Default (no `-CSV` switch)**: Creates formatted Excel workbook, removes intermediate CSV
+3. **Optional Group Sync**: When `-BuildGroup` is used, the script creates or updates an Entra ID device group from the filtered results
+4. **Output Generation**:
+   - **Default (no `-CSV` switch)**: Creates formatted Excel workbook, removes the intermediate CSV
    - **With `-CSV` switch**: Creates CSV file only, skips Excel generation
+5. **Optional Logging**: When `-Verbose` is used, the script writes detailed CMTrace-compatible logging to a `.log` file
 
 ### Output Files
 
@@ -100,6 +138,9 @@ The script requires the following Microsoft Graph API permissions:
 
 **With `-CSV` switch:**
 - `Intune_DiscoveredApps_WithDevices.csv` - Raw data export
+
+**With `-Verbose`:**
+- `Get-DiscoveredAppsAllDevices.log` - CMTrace-compatible verbose log
 
 Files are created in the current directory where the script is executed.
 
@@ -136,8 +177,10 @@ Lists any applications that encountered errors during retrieval:
 
 - **Flexible Output Format**: Choose between Excel (default) or CSV output using the `-CSV` switch
 - **Application Filtering**: Filter apps by name with wildcard support using the `-DisplayName` parameter
+- **Entra Group Sync**: Create or update static Entra ID device groups from the filtered application inventory with the `-BuildGroup` switch
 - **Retry Logic**: Automatically retries failed API calls up to 5 times with exponential backoff
 - **Rate Limiting**: Respects Microsoft Graph API rate limits with configurable delays
+- **Verbose Logging**: Use `-Verbose` for CMTrace-compatible logging to a local log file
 - **Error Tracking**: Captures and reports applications that couldn't be fully processed
 - **Formatted Output**: Professional Excel formatting with:
   - Frozen header rows
@@ -207,6 +250,13 @@ If you encounter persistent rate limiting:
 - Increase `$baseDelayMs` to 500 or 1000
 - The script already implements retry logic with exponential backoff
 
+### Group Sync Issues
+If `-BuildGroup` fails or skips membership updates:
+- Confirm the signed-in account can consent to `Group.ReadWrite.All` and `Device.Read.All`
+- Use `-Verbose` and review `Get-DiscoveredAppsAllDevices.log` in CMTrace for the exact failure point
+- Verify the Intune managed devices can be resolved to Entra device objects
+- Ensure you supplied `-DisplayName` with enough non-wildcard text to build a valid group name
+
 ### Excel Formatting Issues
 If the Devices column doesn't wrap properly:
 - Ensure you're using the latest version of the ImportExcel module
@@ -231,6 +281,12 @@ For issues or questions:
 
 ## Version History
 
+- **v1.2** - Entra group and logging enhancements
+  - Added `-BuildGroup` to create or update Entra ID device groups from filtered app results
+  - Added wildcard-to-group-name normalization such as `Java*` to `App.Java`
+  - Added CMTrace-compatible logging when using `-Verbose`
+  - Added device resolution safeguards to avoid destructive membership removals when lookups are incomplete
+  - Preserved the existing Excel report workflow when `-BuildGroup` is used
 - **v1.1** - Authentication and filtering enhancements
   - Added `-DisplayName` parameter with wildcard support for filtering apps
   - Added `-CSV` switch to control output format (Excel or CSV)
